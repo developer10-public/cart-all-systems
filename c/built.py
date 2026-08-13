@@ -1,7 +1,8 @@
-
 import os
 import re
 import queue
+import sys
+import platform
 import subprocess as sp
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
@@ -11,7 +12,10 @@ from PyQt5.QtGui import QFont, QTextCharFormat, QColor, QTextCursor, QSyntaxHigh
 from PyQt5.QtCore import Qt, QTimer
     
 _version_ = 1.0
-compiler = r"C:\Users\HP\Downloads\IDE-for-programming-languages-1.0.1\IDE-for-programming-languages-1.0.1\compile_lib\ucrt64\bin\gcc.exe"
+
+# Cross-platform compiler fallback
+COMPILER = "gcc"
+
 class C_SyntaxHighlighter(QSyntaxHighlighter):
     """Safe, native PyQt5 syntax highlighter that won't crash the editor loops."""
     def __init__(self, parent=None):
@@ -85,7 +89,6 @@ class C_SyntaxHighlighter(QSyntaxHighlighter):
             if clean_line.startswith("//"):
                 return
 
-        # --- FIX: TRACK STRING RANGES TO PREVENT OVERWRITING ---
         string_ranges = []
         for match in re.finditer(r'".*?"|\'.*?\'', text):
             start = match.start()
@@ -93,33 +96,28 @@ class C_SyntaxHighlighter(QSyntaxHighlighter):
             string_ranges.append((start, match.end()))
             self.setFormat(start, length, self.formats["string"])
 
-        # Helper function to check if a match lands inside a literal string
         def is_inside_string(start_pos, end_pos):
             for s_start, s_end in string_ranges:
                 if start_pos >= s_start and end_pos <= s_end:
                     return True
             return False
 
-        # 3. Base Regex Rules (Only apply if NOT inside a string literal)
+        # 3. Base Regex Rules
         keywords = r'\b(auto|break|case|const|continue|default|do|else|enum|extern|for|goto|if|inline|register|restrict|return|sizeof|static|struct|switch|typedef|union|volatile|while|_Alignas|_Alignof|_Atomic|_Generic|_Imaginary|_Noreturn|_Static_assert|_Thread_local)\b'
         types = r'\b(bool|char|double|float|int|long|short|signed|unsigned|void|_Bool|_Complex)\b'
 
-        # Highlight Keywords
         for match in re.finditer(keywords, text):
             if not is_inside_string(match.start(), match.end()):
                 self.setFormat(match.start(), match.end() - match.start(), self.formats["keyword"])
 
-        # Highlight Types
         for match in re.finditer(types, text):
             if not is_inside_string(match.start(), match.end()):
                 self.setFormat(match.start(), match.end() - match.start(), self.formats["type"])
 
-        # Highlight Functions
         for match in re.finditer(r'\b(?!(?:if|for|while|switch|return)\b)[a-zA-Z_]\w*(?=\s*\()', text):
             if not is_inside_string(match.start(), match.end()):
                 self.setFormat(match.start(), match.end() - match.start(), self.formats["function"])
 
-        # Highlight Variables
         for type_match in re.finditer(types, text):
             if is_inside_string(type_match.start(), type_match.end()):
                 continue
@@ -145,14 +143,12 @@ class ide(QTextEdit):
     def __init__(self, parent=None, state="normal"):
         super().__init__(parent)
         self.setStyleSheet("background-color: #1E1E1E; color: #FFFFFF; selection-background-color: #3A3A3A;")
-        self.setFont(QFont("Consolas", 10))
+        self.setFont(QFont("Consolas" if sys.platform == "win32" else "Monospace", 10))
         
         if state == "disabled":
             self.setReadOnly(True)
             
         self.new_file_name = "noname.c"
-        
-        # Initialize our safe native highlighter attached directly to the document
         self.highlighter = C_SyntaxHighlighter(self.document())
 
 
@@ -218,7 +214,7 @@ class console_log(QTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet("background-color: #1E1E1E; color: #FFFFFF; selection-background-color: #3A3A3A;")
-        self.setFont(QFont("Consolas", 10))
+        self.setFont(QFont("Consolas" if sys.platform == "win32" else "Monospace", 10))
         self.setReadOnly(True)
 
         self.formats = {
@@ -258,7 +254,7 @@ class MainUI(QWidget):
         toolbar_layout = QHBoxLayout(toolbar_widget)
         toolbar_layout.setContentsMargins(10, 0, 10, 0)
         
-        btn_style = "background-color: #007acc; color: white; font-family: Consolas; font-size: 13px; font-weight: bold; border: none; padding: 5px 15px;"
+        btn_style = "background-color: #007acc; color: white; font-family: Consolas, Monospace; font-size: 13px; font-weight: bold; border: none; padding: 5px 15px;"
         
         self.com_btn = QPushButton("Compile", self)
         self.com_btn.setStyleSheet(btn_style)
@@ -292,36 +288,37 @@ class MainUI(QWidget):
         self.compile_timer = QTimer(self)
         self.run_timer = QTimer(self)
 
-    def compile(self):
-        self.ide.auto_save()
-        os.chdir(os.getcwd())
-        current_dir = os.getcwd()
-        batch_file = os.path.join(current_dir, "compiler.bat")
-        compile_log_file = os.path.join(current_dir, "std_compile_out_err.txt")
+    def _get_executable_name(self):
+        return "noname.exe" if sys.platform == "win32" else "./noname"
 
-        if not os.path.exists(batch_file):
-            self.console.clr_scr()
-            self.console.write(f"Error: 'compiler.bat' not found in {current_dir}\n", "stderr")
-            return
+    def compile(self):
+        self.ide.auto_save("noname.c")
+        current_dir = os.getcwd()
+        out_exe = "noname.exe" if sys.platform == "win32" else "noname"
+        compile_log_file = os.path.join(current_dir, "std_compile_out_err.txt")
 
         self.console.clr_scr()
         self.console.write(" Compiling code...\n", "system")
 
         try:
-            open(compile_log_file, "w").close()
-            self.compile_log_handle = open(compile_log_file, "w", encoding="utf-8")
+            self.compile_log_handle = open(compile_log_file, "w+", encoding="utf-8")
         except Exception as e:
             self.console.write(f"❌ Failed to initialize log file: {str(e)}\n", "stderr")
             return
 
-        self.compilation_process = sp.Popen(
-            f'cmd /c "{batch_file}"',
-            shell=True,
-            stdout=self.compile_log_handle,
-            stderr=self.compile_log_handle,
-            cwd=current_dir,
-            creationflags=sp.CREATE_NO_WINDOW,
-        )
+        # Direct GCC compilation call
+        cmd = [COMPILER, "noname.c", "-o", out_exe]
+
+        try:
+            self.compilation_process = sp.Popen(
+                cmd,
+                stdout=self.compile_log_handle,
+                stderr=self.compile_log_handle,
+                cwd=current_dir
+            )
+        except FileNotFoundError:
+            self.console.write(f"❌ Compiler '{COMPILER}' not found in PATH.\n", "stderr")
+            return
 
         self.compile_last_read_position = 0
         self.compile_timer.timeout.connect(lambda: self._tail_compile_log(compile_log_file))
@@ -341,13 +338,16 @@ class MainUI(QWidget):
 
         if self.compilation_process.poll() is not None:
             self.compile_timer.stop()
-            self.compile_timer.disconnect()
+            try:
+                self.compile_timer.disconnect()
+            except TypeError:
+                pass
             
             if hasattr(self, 'compile_log_handle') and not self.compile_log_handle.closed:
                 self.compile_log_handle.close()
             
-            current_dir = os.getcwd()
-            exe_file = os.path.join(current_dir, "noname.exe")
+            exe_name = "noname.exe" if sys.platform == "win32" else "noname"
+            exe_file = os.path.join(os.getcwd(), exe_name)
             if os.path.exists(exe_file) and os.path.getsize(exe_file) > 0:
                 self.console.write("Compilation finished successfully!\n", "system")
             else:
@@ -358,56 +358,25 @@ class MainUI(QWidget):
         self.console.write(" Running program...\n", "system")
 
         current_dir = os.getcwd()
-        run_log_file = os.path.join(current_dir, "std_out_err.txt")
+        exe_name = "noname.exe" if sys.platform == "win32" else "./noname"
+        exe_path = os.path.join(current_dir, "noname.exe" if sys.platform == "win32" else "noname")
 
-        try:
-            open(run_log_file, "w").close()
-            self.run_log_handle = open(run_log_file, "w", encoding="utf-8")
-        except Exception as e:
-            self.console.write(f"❌ Failed to initialize log file: {str(e)}\n", "stderr")
+        if not os.path.exists(exe_path):
+            self.console.write("❌ Executable not found. Please compile first.\n", "stderr")
             return
 
-        self.running_process = sp.Popen(
-            ["start", "cmd", "/K", "noname.exe"], 
-            shell=True,
-            cwd=current_dir
-        )
-        self.run_last_read_position = 0
-        self.run_timer.timeout.connect(lambda: self._tail_run_log(run_log_file))
-        self.run_timer.start(50)
-
-    def _tail_run_log(self, log_file_path):
-        try:
-            if os.path.exists(log_file_path):
-                with open(log_file_path, "r", encoding="utf-8") as f:
-                    f.seek(self.run_last_read_position)
-                    new_data = f.read()
-                    self.run_last_read_position = f.tell()
-                if new_data:
-                    self.console.write(new_data, "stdout")
-        except Exception as e:
-            print(f"Runtime log tailing error: {e}")
-
-        exit_code = self.running_process.poll()
-
-        if exit_code is not None:
-            self.run_timer.stop()
-            self.run_timer.disconnect()
-            
-            if hasattr(self, 'run_log_handle') and not self.run_log_handle.closed:
-                self.run_log_handle.close()
-            
-            try:
-                if os.path.exists(log_file_path):
-                    with open(log_file_path, "r", encoding="utf-8") as f:
-                        f.seek(self.run_last_read_position)
-                        final_data = f.read()
-                        if final_data:
-                            self.console.write(final_data, "stdout")
-            except Exception:
-                pass
-
-            if exit_code == 0:
-                self.console.write("\nProgram is done with exit code 0\n", "system")
+        # Cross-platform Terminal Runner
+        if sys.platform == "win32":
+            cmd = ["cmd", "/C", f"start cmd /K {exe_name}"]
+        elif sys.platform == "darwin":  # macOS
+            cmd = ["osascript", "-e", f'tell application "Terminal" to do script "cd {current_dir} && {exe_name}"']
+        else:  # Linux
+            if os.system("which xterm > /dev/null 2>&1") == 0:
+                cmd = ["xterm", "-e", f"cd {current_dir} && {exe_name}; read -p 'Press enter to exit...'"]
+            elif os.system("which gnome-terminal > /dev/null 2>&1") == 0:
+                cmd = ["gnome-terminal", "--", "bash", "-c", f"cd {current_dir} && {exe_name}; read -p 'Press enter to exit...'"]
             else:
-                self.console.write(f"\nProgram exited with code: {exit_code}\n", "stderr")  
+                cmd = [exe_name]
+
+        self.running_process = sp.Popen(cmd, cwd=current_dir)
+        self.console.write("Program dispatched to separate window process.\n", "system")
