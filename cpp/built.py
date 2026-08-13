@@ -1,19 +1,13 @@
 """
-Built-in functions for making a C++ IDE.
-
-This module is for Vietnamese people, if non-Vietnamese people wants to use,
-delete the comments above.
-
-This is 1.0 version, if anyone have bugs or excepts, send via Discord: helofj_96789.
-
-If you want to use this module, you MUST install MinGW and sure it has gcc.exe / g++.exe.
-
-Another news: C ide has released!!!
+Built-in functions for making a cross-platform C++ IDE.
+Compatible with Windows, Linux, and macOS (Darwin).
 """
 
 import os
 import re
 import queue
+import sys
+import platform
 import subprocess as sp
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
@@ -23,7 +17,10 @@ from PyQt5.QtGui import QFont, QTextCharFormat, QColor, QTextCursor, QSyntaxHigh
 from PyQt5.QtCore import Qt, QTimer
 
 _version_ = 1.0 
-compiler = r"C:\Users\HP\Downloads\IDE-for-programming-languages-1.0.1\IDE-for-programming-languages-1.0.1\compile_lib\ucrt64\bin\g++.exe"
+
+# Cross-platform compiler executable fallback
+COMPILER = "g++"
+
 class Cpp_SyntaxHighlighter(QSyntaxHighlighter):
     """Safe, native PyQt5 syntax highlighter that handles C++ patterns safely."""
     def __init__(self, parent=None):
@@ -81,7 +78,7 @@ class Cpp_SyntaxHighlighter(QSyntaxHighlighter):
         if not clean_line:
             return
 
-        # 1. Handle Include Check (C++ Rules: Allow <iostream> without .h)
+        # 1. Handle Include Check
         if clean_line.startswith("#include"):
             include_match = re.search(r'#include\s*(<[a-zA-Z0-9_\+/\.]+>|"[a-zA-Z0-9_\+/\.]+(\.h|\.hpp)*")\s*$', text)
             if include_match:
@@ -97,7 +94,7 @@ class Cpp_SyntaxHighlighter(QSyntaxHighlighter):
             if clean_line.startswith("//"):
                 return
 
-        # 3. Track String Ranges to prevent keyword coloring within literal texts
+        # 3. Track String Ranges
         string_ranges = []
         for match in re.finditer(r'".*?"|\'.*?\'', text):
             start = match.start()
@@ -111,26 +108,21 @@ class Cpp_SyntaxHighlighter(QSyntaxHighlighter):
                     return True
             return False
 
-        # C++ Keyword and Type Configurations
         keywords = r'\b(auto|break|case|catch|class|const|constexpr|continue|default|delete|do|else|enum|explicit|export|extern|for|friend|goto|if|inline|mutable|namespace|new|noexcept|operator|private|protected|public|register|reinterpret_cast|return|sizeof|static|static_cast|struct|switch|template|this|throw|try|typedef|typename|union|using|virtual|volatile|while)\b'
         types = r'\b(bool|char|char16_t|char32_t|double|float|int|long|short|signed|unsigned|void|wchar_t|string|vector|map|set|list)\b'
 
-        # Highlight Keywords
         for match in re.finditer(keywords, text):
             if not is_inside_string(match.start(), match.end()):
                 self.setFormat(match.start(), match.end() - match.start(), self.formats["keyword"])
 
-        # Highlight Types
         for match in re.finditer(types, text):
             if not is_inside_string(match.start(), match.end()):
                 self.setFormat(match.start(), match.end() - match.start(), self.formats["type"])
 
-        # Highlight Functions
         for match in re.finditer(r'\b(?!(?:if|for|while|switch|return|catch)\b)[a-zA-Z_]\w*(?=\s*\()', text):
             if not is_inside_string(match.start(), match.end()):
                 self.setFormat(match.start(), match.end() - match.start(), self.formats["function"])
 
-        # Highlight Variables
         for type_match in re.finditer(types, text):
             if is_inside_string(type_match.start(), type_match.end()):
                 continue
@@ -143,7 +135,7 @@ class Cpp_SyntaxHighlighter(QSyntaxHighlighter):
                 if not is_inside_string(var_start_col, var_start_col + len(var_name)):
                     self.setFormat(var_start_col, len(var_name), self.formats["var"])
 
-        # 4. Semicolon Linting Check (Relaxed for C++)
+        # 4. Semicolon Linting Check
         if not clean_line.startswith(('', '//', '/*', '*', 'public:', 'private:', 'protected:')):
             if not clean_line.endswith((';', '{', '}', ',', ':')) and not clean_line.startswith(('if', 'for', 'while', 'switch', 'class', 'namespace', 'try', 'catch')):
                 stripped_line = text.rstrip()
@@ -156,7 +148,7 @@ class ide(QTextEdit):
     def __init__(self, parent=None, state="normal"):
         super().__init__(parent)
         self.setStyleSheet("background-color: #1E1E1E; color: #FFFFFF; selection-background-color: #3A3A3A;")
-        self.setFont(QFont("Consolas", 10))
+        self.setFont(QFont("Consolas" if sys.platform == "win32" else "Monospace", 10))
         
         if state == "disabled":
             self.setReadOnly(True)
@@ -227,7 +219,7 @@ class console_log(QTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet("background-color: #1E1E1E; color: #FFFFFF; selection-background-color: #3A3A3A;")
-        self.setFont(QFont("Consolas", 10))
+        self.setFont(QFont("Consolas" if sys.platform == "win32" else "Monospace", 10))
         self.setReadOnly(True)
 
         self.formats = {
@@ -267,7 +259,7 @@ class MainUI(QWidget):
         toolbar_layout = QHBoxLayout(toolbar_widget)
         toolbar_layout.setContentsMargins(10, 0, 10, 0)
         
-        btn_style = "background-color: #007acc; color: white; font-family: Consolas; font-size: 13px; font-weight: bold; border: none; padding: 5px 15px;"
+        btn_style = "background-color: #007acc; color: white; font-family: Consolas, Monospace; font-size: 13px; font-weight: bold; border: none; padding: 5px 15px;"
         
         self.com_btn = QPushButton("Compile", self)
         self.com_btn.setStyleSheet(btn_style)
@@ -302,35 +294,34 @@ class MainUI(QWidget):
         self.run_timer = QTimer(self)
 
     def compile(self):
-        self.ide.auto_save()
+        self.ide.auto_save("noname.cpp")
 
         current_dir = os.getcwd()
-        batch_file = os.path.join(current_dir, "compiler.bat")
+        out_exe = "noname.exe" if sys.platform == "win32" else "noname"
         compile_log_file = os.path.join(current_dir, "std_compile_out_err.txt")
-
-        if not os.path.exists(batch_file):
-            self.console.clr_scr()
-            self.console.write(f"Error: 'compiler.bat' not found in {current_dir}\n", "stderr")
-            return
 
         self.console.clr_scr()
         self.console.write(" Compiling C++ code...\n", "system")
 
         try:
-            open(compile_log_file, "w").close()
-            self.compile_log_handle = open(compile_log_file, "w", encoding="utf-8")
+            self.compile_log_handle = open(compile_log_file, "w+", encoding="utf-8")
         except Exception as e:
             self.console.write(f"❌ Failed to initialize log file: {str(e)}\n", "stderr")
             return
 
-        self.compilation_process = sp.Popen(
-            f'cmd /c "{batch_file}"',
-            shell=True,
-            stdout=self.compile_log_handle,
-            stderr=self.compile_log_handle,
-            cwd=current_dir,
-            creationflags=sp.CREATE_NO_WINDOW,
-        )
+        # Invoke dynamic compiler directly
+        cmd = [COMPILER, "noname.cpp", "-o", out_exe]
+
+        try:
+            self.compilation_process = sp.Popen(
+                cmd,
+                stdout=self.compile_log_handle,
+                stderr=self.compile_log_handle,
+                cwd=current_dir
+            )
+        except FileNotFoundError:
+            self.console.write(f"❌ Compiler '{COMPILER}' not found in system PATH.\n", "stderr")
+            return
 
         self.compile_last_read_position = 0
         self.compile_timer.timeout.connect(lambda: self._tail_compile_log(compile_log_file))
@@ -350,13 +341,16 @@ class MainUI(QWidget):
 
         if self.compilation_process.poll() is not None:
             self.compile_timer.stop()
-            self.compile_timer.disconnect()
+            try:
+                self.compile_timer.disconnect()
+            except TypeError:
+                pass
             
             if hasattr(self, 'compile_log_handle') and not self.compile_log_handle.closed:
                 self.compile_log_handle.close()
             
-            current_dir = os.getcwd()
-            exe_file = os.path.join(current_dir, "noname.exe")
+            exe_name = "noname.exe" if sys.platform == "win32" else "noname"
+            exe_file = os.path.join(os.getcwd(), exe_name)
             if os.path.exists(exe_file) and os.path.getsize(exe_file) > 0:
                 self.console.write("Compilation finished successfully!\n", "system")
             else:
@@ -367,11 +361,27 @@ class MainUI(QWidget):
         self.console.write(" Running program inside external interactive terminal...\n", "system")
         current_dir = os.getcwd()
 
-        self.running_process = sp.Popen(
-            ["start", "cmd", "/K", "noname.exe"],
-            shell=True,
-            cwd=current_dir,
-        )
+        exe_name = "noname.exe" if sys.platform == "win32" else "./noname"
+        exe_path = os.path.join(current_dir, "noname.exe" if sys.platform == "win32" else "noname")
+
+        if not os.path.exists(exe_path):
+            self.console.write("❌ Executable not found. Please compile first.\n", "stderr")
+            return
+
+        # System Terminal launcher routing
+        if sys.platform == "win32":
+            cmd = ["cmd", "/C", f"start cmd /K {exe_name}"]
+        elif sys.platform == "darwin":  # macOS
+            cmd = ["osascript", "-e", f'tell application "Terminal" to do script "cd {current_dir} && {exe_name}"']
+        else:  # Linux
+            if os.system("which xterm > /dev/null 2>&1") == 0:
+                cmd = ["xterm", "-e", f"cd {current_dir} && {exe_name}; read -p 'Press enter to exit...'"]
+            elif os.system("which gnome-terminal > /dev/null 2>&1") == 0:
+                cmd = ["gnome-terminal", "--", "bash", "-c", f"cd {current_dir} && {exe_name}; read -p 'Press enter to exit...'"]
+            else:
+                cmd = [exe_name]
+
+        self.running_process = sp.Popen(cmd, cwd=current_dir)
         self.run_timer.timeout.connect(self._check_process_finished)
         self.run_timer.start(100)
 
@@ -379,5 +389,8 @@ class MainUI(QWidget):
         exit_code = self.running_process.poll()
         if exit_code is not None:
             self.run_timer.stop()
-            self.run_timer.disconnect()
+            try:
+                self.run_timer.disconnect()
+            except TypeError:
+                pass
             self.console.write(f"\nExternal execution finished.\n", "system")
